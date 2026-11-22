@@ -16,6 +16,14 @@ interface WifiLink {
 
     fun setEnabled(enabled: Boolean)
 
+    /** Bike hotspot SSID used to join it privately (Android 10+); empty = use whatever Wi-Fi is joined. */
+    val ssid: StateFlow<String>
+
+    /** Bike hotspot password (empty for an open network). */
+    val passphrase: StateFlow<String>
+
+    fun setCredentials(ssid: String, passphrase: String)
+
     /** Probe the current Wi-Fi network for the head unit (gateway ports, mDNS, SSDP) and log it all. */
     fun scan()
 }

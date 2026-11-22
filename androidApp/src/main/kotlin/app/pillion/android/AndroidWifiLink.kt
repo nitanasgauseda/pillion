@@ -2,11 +2,17 @@ package app.pillion.android
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
+import android.net.wifi.WifiNetworkSpecifier
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
+import androidx.annotation.RequiresApi
 import app.pillion.core.Logger
 import app.pillion.core.WifiLink
 import kotlinx.coroutines.CoroutineScope
@@ -50,6 +56,72 @@ class AndroidWifiLink(
     override val status: StateFlow<String> = _status.asStateFlow()
     private val _enabled = MutableStateFlow(prefs.getBoolean(KEY_ENABLED, false))
     override val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
+    private val _ssid = MutableStateFlow(prefs.getString(KEY_SSID, "") ?: "")
+    override val ssid: StateFlow<String> = _ssid.asStateFlow()
+    private val _passphrase = MutableStateFlow(prefs.getString(KEY_PASS, "") ?: "")
+    override val passphrase: StateFlow<String> = _passphrase.asStateFlow()
+
+    override fun setCredentials(ssid: String, passphrase: String) {
+        _ssid.value = ssid.trim()
+        _passphrase.value = passphrase
+        prefs.edit().putString(KEY_SSID, ssid.trim()).putString(KEY_PASS, passphrase).apply()
+    }
+
+    /** Whether Start should join the hotspot itself (local-only) instead of using the system Wi-Fi. */
+    fun usesLocalRequest(): Boolean =
+        _enabled.value && _ssid.value.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+
+    /**
+     * Join the bike hotspot with a [WifiNetworkSpecifier]. Such a network is local-only: Android never
+     * makes it the default, so Waze & co. keep using mobile data while the dash runs over Wi-Fi.
+     * The first time, Android shows a "connect to device" dialog; after approval it's remembered.
+     * [onReady] runs once on the main thread with the network target, [onFailed] if it can't connect.
+     */
+    @RequiresApi(Build.VERSION_CODES.Q)
+    fun requestLocalNetwork(onReady: (Target) -> Unit, onFailed: (String) -> Unit) {
+        releaseLocalNetwork()
+        val specifier = WifiNetworkSpecifier.Builder().setSsid(_ssid.value).apply {
+            val pass = _passphrase.value
+            if (pass.isNotEmpty()) setWpa2Passphrase(pass)
+        }.build()
+        val request = NetworkRequest.Builder()
+            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
+            .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .setNetworkSpecifier(specifier)
+            .build()
+        publish("Joining ${_ssid.value}…")
+        var delivered = false
+        val callback = object : ConnectivityManager.NetworkCallback() {
+            // Link properties (and so the gateway) can lag onAvailable; start once we have them.
+            override fun onLinkPropertiesChanged(network: Network, lp: LinkProperties) {
+                if (delivered) return
+                val host = prefs.getString(KEY_HOST, null) ?: gatewayOf(lp)?.hostAddress ?: return
+                delivered = true
+                Logger.d("wifi: local network up iface=${lp.interfaceName} target $host")
+                publish("Connected to ${_ssid.value} (local only) · $host")
+                onReady(Target(network, host, prefs.getInt(KEY_PORT, DEFAULT_SDL_PORT)))
+            }
+
+            override fun onUnavailable() {
+                localCallback = null
+                publish("Couldn't join ${_ssid.value} — check SSID/password and that the bike Wi-Fi is on")
+                onFailed("Bike Wi-Fi not available")
+            }
+
+            override fun onLost(network: Network) {
+                Logger.d("wifi: local network lost")
+                publish("Bike Wi-Fi lost")
+            }
+        }
+        localCallback = callback
+        cm.requestNetwork(request, callback, Handler(Looper.getMainLooper()), REQUEST_TIMEOUT_MS)
+    }
+
+    /** Drop the local-only request; Android disconnects from the bike hotspot. */
+    fun releaseLocalNetwork() {
+        localCallback?.let { runCatching { cm.unregisterNetworkCallback(it) } }
+        localCallback = null
+    }
 
     override fun setEnabled(enabled: Boolean) {
         _enabled.value = enabled
@@ -236,8 +308,10 @@ class AndroidWifiLink(
         @Suppress("DEPRECATION")
         cm.allNetworks.firstOrNull { cm.getNetworkCapabilities(it)?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true }
 
-    private fun gatewayOf(network: Network): InetAddress? {
-        val lp = cm.getLinkProperties(network) ?: return null
+    private fun gatewayOf(network: Network): InetAddress? =
+        cm.getLinkProperties(network)?.let(::gatewayOf)
+
+    private fun gatewayOf(lp: LinkProperties): InetAddress? {
         // A default route via 0.0.0.0 is on-link, not a gateway; using it would dial the phone itself.
         return lp.routes.firstOrNull { it.isDefaultRoute && it.gateway is Inet4Address && !it.gateway!!.isAnyLocalAddress }?.gateway
             ?: (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) lp.dhcpServerAddress else null)
@@ -261,6 +335,15 @@ class AndroidWifiLink(
         private const val KEY_STATUS = "status"
         private const val KEY_HOST = "host"
         private const val KEY_PORT = "port"
+        private const val KEY_SSID = "ssid"
+        private const val KEY_PASS = "passphrase"
+        private const val REQUEST_TIMEOUT_MS = 30_000
+
+        /**
+         * Callback for the active local-only request; Android keeps the bike network up while it's
+         * registered. Process-wide so a recreated Activity (rotation) can still release it on Stop.
+         */
+        @Volatile private var localCallback: ConnectivityManager.NetworkCallback? = null
         private const val DEFAULT_SDL_PORT = 12345
         private const val PARALLEL = 128
         private const val CONNECT_TIMEOUT_MS = 400
@@ -277,7 +360,7 @@ class AndroidWifiLink(
         /** Summary line for the diagnostic zip. */
         fun describe(context: Context): String {
             val p = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            return "enabled=${p.getBoolean(KEY_ENABLED, false)} target=${p.getString(KEY_HOST, "(gateway)")}:" +
+            return "enabled=${p.getBoolean(KEY_ENABLED, false)} ssid='${p.getString(KEY_SSID, "")}' target=${p.getString(KEY_HOST, "(gateway)")}:" +
                 "${p.getInt(KEY_PORT, DEFAULT_SDL_PORT)} lastScan='${p.getString(KEY_STATUS, "never")}'"
         }
     }

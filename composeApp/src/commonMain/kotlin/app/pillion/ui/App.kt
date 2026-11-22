@@ -88,6 +88,8 @@ fun App(
         val uriHandler = LocalUriHandler.current
         val wifiEnabled = wifiLink?.enabled?.collectAsState()?.value ?: false
         val wifiStatus = wifiLink?.status?.collectAsState()?.value
+        val wifiSsid = wifiLink?.ssid?.collectAsState()?.value ?: ""
+        val wifiPassphrase = wifiLink?.passphrase?.collectAsState()?.value ?: ""
 
         LaunchedEffect(updateChecker) { update = updateChecker?.newerThan(AppInfo.VERSION) }
         BackHandler(enabled = showSettings || showDashOnboarding) {
@@ -140,6 +142,9 @@ fun App(
                 wifiStatus = wifiStatus,
                 onWifiEnabled = { wifiLink?.setEnabled(it) },
                 onWifiScan = { wifiLink?.scan() },
+                wifiSsid = wifiSsid,
+                wifiPassphrase = wifiPassphrase,
+                onWifiCredentials = { ssid, pass -> wifiLink?.setCredentials(ssid, pass) },
                 onBack = { showSettings = false },
             )
         } else {

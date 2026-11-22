@@ -33,6 +33,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -52,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import app.pillion.core.AppInfo
@@ -100,6 +102,9 @@ internal fun SettingsScreen(
     wifiStatus: String? = null,
     onWifiEnabled: (Boolean) -> Unit = {},
     onWifiScan: () -> Unit = {},
+    wifiSsid: String = "",
+    wifiPassphrase: String = "",
+    onWifiCredentials: (ssid: String, passphrase: String) -> Unit = { _, _ -> },
     onBack: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
@@ -224,6 +229,22 @@ internal fun SettingsScreen(
                     Switch(checked = wifiEnabled, onCheckedChange = onWifiEnabled)
                 }
                 GroupDivider()
+                OutlinedTextField(
+                    value = wifiSsid,
+                    onValueChange = { onWifiCredentials(it, wifiPassphrase) },
+                    label = { Text("Bike Wi-Fi name (SSID)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                )
+                OutlinedTextField(
+                    value = wifiPassphrase,
+                    onValueChange = { onWifiCredentials(wifiSsid, it) },
+                    label = { Text("Bike Wi-Fi password") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                )
+                GroupDivider()
                 Row(
                     Modifier.fillMaxWidth().clickable(onClick = onWifiScan).padding(vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -245,7 +266,10 @@ internal fun SettingsScreen(
                 }
             }
             Text(
-                "Join the bike's Wi-Fi in Android settings first (keep it connected even without internet). " +
+                "Android 10+: enter the bike's Wi-Fi name and password and Pillion joins it itself as a " +
+                    "local-only network, so mobile data (Waze, music) keeps working. Leave the name empty to " +
+                    "use the Wi-Fi joined in Android settings instead. " +
+                    "Otherwise join the bike's Wi-Fi in Android settings first (keep it connected even without internet). " +
                     "The dash is found automatically; scan only if it doesn't connect (takes a few minutes).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

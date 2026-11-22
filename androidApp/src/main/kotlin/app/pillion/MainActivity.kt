@@ -174,10 +174,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startSdlService() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && wifiLink.usesLocalRequest()) {
+            // Join the bike hotspot as a local-only network: only this process is bound to it, and
+            // Android keeps mobile data as the default network, so Waze stays online.
+            wifiLink.requestLocalNetwork(
+                onReady = { target -> launchSdlService(target) },
+                onFailed = { launchSdlService(null) }, // falls back to USB
+            )
+            return
+        }
+        launchSdlService(wifiLink.target())
+    }
+
+    private fun launchSdlService(wifi: AndroidWifiLink.Target?) {
         val intent = Intent(this, SdlService::class.java)
             .putExtra(SdlService.EXTRA_APP_ID, SdlService.APP_ID_GARMIN)
             .putExtra(SdlService.EXTRA_MIRROR, true)
-        val wifi = wifiLink.target()
         if (wifi != null) {
             // The bike's hotspot has no internet, so Android routes via mobile data by default — pin the
             // process to the Wi-Fi network or the TCP connect to the dash never leaves the phone.
@@ -193,6 +205,7 @@ class MainActivity : ComponentActivity() {
         // auto-revive it while the USB cable is still connected.
         startService(Intent(this, SdlService::class.java).setAction(SdlService.ACTION_STOP))
         getSystemService(ConnectivityManager::class.java).bindProcessToNetwork(null)
+        wifiLink.releaseLocalNetwork()
     }
 
     private fun requestWifiPermissions() {

@@ -10,6 +10,8 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Experimental Wi-Fi link: read the joined network + nearby SSIDs to find the bike's hotspot. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Needed to join the bike hotspot as a local-only network via WifiNetworkSpecifier (Android 10+). -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
 
