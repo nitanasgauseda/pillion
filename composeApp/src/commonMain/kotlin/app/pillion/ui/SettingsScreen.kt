@@ -76,6 +76,7 @@ internal fun SettingsScreen(
     maxFps: Int,
     onMaxFps: (Int) -> Unit,
     mirrorFitSupported: Boolean = false,
+    adaptiveQualitySupported: Boolean = false,
     mirrorFit: MirrorFit = MirrorFit.FIT,
     onMirrorFit: (MirrorFit) -> Unit = {},
     themeMode: ThemeMode,
@@ -286,13 +287,18 @@ internal fun SettingsScreen(
             }
         }
         Text(
-            if (mirrorFitSupported) {
-                "Image quality is the maximum: it is lowered automatically while the Bluetooth link can't " +
-                    "keep up, then restored. The FPS cap saves battery and reduces heat. \"Fill dash\" crops " +
-                    "the middle of the screen instead of showing black bars."
+            (
+                if (adaptiveQualitySupported) {
+                    "Image quality is the maximum: it is lowered automatically while the Bluetooth link " +
+                        "can't keep up, then restored. The FPS cap saves battery and reduces heat."
+                } else {
+                    "Higher quality looks sharper but makes the picture less smooth. The FPS cap " +
+                        "saves battery and reduces heat."
+                }
+            ) + if (mirrorFitSupported) {
+                " \"Fill dash\" crops the middle of the screen instead of showing black bars."
             } else {
-                "Higher quality looks sharper but makes the picture less smooth. The FPS cap " +
-                    "saves battery and reduces heat."
+                ""
             },
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,

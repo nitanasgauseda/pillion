@@ -9,7 +9,7 @@ All notable changes to Pillion are documented here. The format follows
 ### Added
 - **Screen fit (Android mirroring).** Settings -> *Screen fit*: *Whole screen* (letterbox, as before) or
   *Fill dash*, which mirrors at the phone's aspect ratio and crops the centre so the dash has no black bars.
-  Follows rotation.
+  Follows rotation. Works for Bluetooth (StreetCross) and USB/Wi-Fi (Motorize/SDL) mirroring.
 - **Adaptive image quality (Android mirroring).** The *Image quality* slider is now the maximum: quality
   steps down (by 5, at most 20 below the slider, never under 25) while the Bluetooth link can't reach the
   fps cap, and back up once it can. It stops stepping down when a step didn't make ACKs faster (a dash

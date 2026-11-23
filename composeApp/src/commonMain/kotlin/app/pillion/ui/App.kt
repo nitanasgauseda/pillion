@@ -113,8 +113,9 @@ fun App(
                 onQuality = { quality = it },
                 maxFps = maxFps,
                 onMaxFps = { maxFps = it },
-                // Screen fit / adaptive quality live in the Android Bluetooth (NaviLite) mirror path.
-                mirrorFitSupported = onStartDash != null && !profile.requiresUsb,
+                // Screen fit: Android mirroring (Bluetooth and USB/Wi-Fi). Adaptive quality: Bluetooth only.
+                mirrorFitSupported = onStartDash != null,
+                adaptiveQualitySupported = onStartDash != null && !profile.requiresUsb,
                 mirrorFit = mirrorFit,
                 onMirrorFit = { mirrorFit = it; settingsStore?.setMirrorFit(it) },
                 themeMode = themeMode,
