@@ -3,6 +3,7 @@ package app.pillion.android
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.graphics.Point
@@ -23,6 +24,7 @@ import app.pillion.core.MirrorFit
 import app.pillion.core.MirrorGeometry
 import app.pillion.core.ScreenSource
 import java.io.ByteArrayOutputStream
+import java.nio.Buffer
 import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -68,6 +70,10 @@ class MediaProjectionScreenSource(
     // Size the engine asked for. Read on any thread: a JPEG of any other size is never handed out.
     @Volatile private var requestedWidth = DEFAULT_WIDTH
     @Volatile private var requestedHeight = DEFAULT_HEIGHT
+    // Demand tracking: encoding pauses ("parks") while nobody is pulling frames — during Bluetooth
+    // connect, handshake and reconnect backoff — so no CPU/heat is spent on JPEGs nobody sends.
+    @Volatile private var lastPullAt = 0L
+    @Volatile private var parked = false
 
     // ---- capture-thread state: touched only on [handler]'s thread ----
     private var reader: ImageReader? = null
@@ -91,6 +97,7 @@ class MediaProjectionScreenSource(
     private val srcRect = Rect()
     private val dstRect = Rect()
     private var loggedFirstFrame = false
+    private var capturedContentSize: Point? = null // API 34+ captured-content size, if reported
 
     private val encodeRunnable = Runnable { encode() }
 
@@ -99,6 +106,14 @@ class MediaProjectionScreenSource(
             Log.w(TAG, "screen: projection stopped")
             releaseCapture("projection_stopped")
             onProjectionStopped?.invoke()
+        }
+
+        // Android 14+: the real size of what is being captured (differs from the default display
+        // when the user chose to share a single app). Only called on API 34+, on [handler].
+        override fun onCapturedContentResize(width: Int, height: Int) {
+            if (width <= 0 || height <= 0) return
+            capturedContentSize = Point(width, height)
+            if (fit == MirrorFit.FILL) reconfigure("captured content ${width}x$height")
         }
     }
 
@@ -140,10 +155,17 @@ class MediaProjectionScreenSource(
         geometry = computeGeometry()
         val r = newReader(geometry)
         reader = r
-        display = projection.createVirtualDisplay(
-            "pillion", geometry.captureWidth, geometry.captureHeight, densityDpi(),
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler,
-        )
+        display = try {
+            projection.createVirtualDisplay(
+                "pillion", geometry.captureWidth, geometry.captureHeight, densityDpi(),
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR, r.surface, null, handler,
+            )
+        } catch (t: Throwable) {
+            runCatching { projection.unregisterCallback(projectionCallback) }
+            reader = null
+            r.close()
+            throw t
+        }
         runCatching { displayManager.registerDisplayListener(displayListener, handler) }
         Log.d(TAG, "screen: virtual display created (${geometry.captureWidth}x${geometry.captureHeight}, fit=$fit)")
     }
@@ -161,6 +183,13 @@ class MediaProjectionScreenSource(
             @Suppress("DEPRECATION") // getRealSize is the rotation-aware size available to a Service
             displayManager.getDisplay(Display.DEFAULT_DISPLAY)?.getRealSize(size)
         }
+        capturedContentSize?.let { content ->
+            // Single-app capture keeps its own aspect; rotation still swaps it with the display.
+            val displayLandscape = size.x > size.y
+            val contentLandscape = content.x > content.y
+            if (size.x <= 0 || displayLandscape == contentLandscape) size.set(content.x, content.y)
+            else size.set(content.y, content.x)
+        }
         return MirrorGeometry.compute(size.x, size.y, outWidth, outHeight, fit)
     }
 
@@ -173,11 +202,16 @@ class MediaProjectionScreenSource(
         if (g.captureWidth != geometry.captureWidth || g.captureHeight != geometry.captureHeight) {
             val newReader = newReader(g)
             try {
+                // Detach, resize, then attach a surface of the new size: since Android 14 the
+                // mirrored content is scaled to the consumer surface, so the display must never be
+                // resized while still feeding a surface of the old size.
+                vd.surface = null
                 vd.resize(g.captureWidth, g.captureHeight, densityDpi())
                 vd.surface = newReader.surface
             } catch (t: Throwable) {
-                // Keep the old capture: encode() still scales its crop to the output size.
+                // Roll back to the old capture: encode() still scales its crop to the output size.
                 Log.w(TAG, "screen: virtual display resize failed ($reason)", t)
+                runCatching { vd.resize(geometry.captureWidth, geometry.captureHeight, densityDpi()) }
                 runCatching { vd.surface = reader?.surface }
                 newReader.close()
                 return
@@ -224,13 +258,15 @@ class MediaProjectionScreenSource(
             val rowBytes = width * pixelStride
             val dst = packed?.takeIf { it.capacity() >= rowBytes * height }
                 ?: ByteBuffer.allocateDirect(rowBytes * height).also { packed = it }
-            dst.clear()
+            // Buffer-typed calls: ByteBuffer's covariant overrides only exist on Android 14+.
+            val src: Buffer = buffer
+            (dst as Buffer).clear()
             for (row in 0 until height) {
-                buffer.limit(row * plane.rowStride + rowBytes)
-                buffer.position(row * plane.rowStride)
+                src.limit(row * plane.rowStride + rowBytes)
+                src.position(row * plane.rowStride)
                 dst.put(buffer)
             }
-            dst.flip()
+            (dst as Buffer).flip()
             val bmp = reuse(raw, width, height).also { raw = it }
             bmp.copyPixelsFromBuffer(dst)
         }
@@ -250,6 +286,10 @@ class MediaProjectionScreenSource(
     private fun encode() {
         encodeScheduled = false
         if (ended || !rawDirty) return
+        if (SystemClock.uptimeMillis() - lastPullAt > DEMAND_WINDOW_MS) {
+            parked = true // keep rawDirty: the next pull re-kicks an encode of the newest pixels
+            return
+        }
         val src = raw ?: return
         val g = rawGeometry ?: return
         rawDirty = false
@@ -268,8 +308,18 @@ class MediaProjectionScreenSource(
                 // 1:1 copy of the crop when the capture matches the output; a scale only for the
                 // one frame captured before a resize took effect.
                 srcRect.set(g.cropX, g.cropY, g.cropX + g.cropWidth, g.cropY + g.cropHeight)
-                dstRect.set(0, 0, w, h)
-                outputCanvas!!.drawBitmap(src, srcRect, dstRect, copyPaint)
+                val canvas = outputCanvas!!
+                if (g.cropWidth == w && g.cropHeight == h) {
+                    dstRect.set(0, 0, w, h)
+                } else {
+                    // Pixels from before a resize: scale without distorting, letterboxed in black.
+                    val scale = minOf(w.toFloat() / g.cropWidth, h.toFloat() / g.cropHeight)
+                    val dw = (g.cropWidth * scale).toInt().coerceIn(1, w)
+                    val dh = (g.cropHeight * scale).toInt().coerceIn(1, h)
+                    dstRect.set((w - dw) / 2, (h - dh) / 2, (w - dw) / 2 + dw, (h - dh) / 2 + dh)
+                    canvas.drawColor(Color.BLACK)
+                }
+                canvas.drawBitmap(src, srcRect, dstRect, copyPaint)
                 out
             }
             jpegBuffer.reset()
@@ -286,13 +336,24 @@ class MediaProjectionScreenSource(
         }
     }
 
+    /** Called on every engine pull: marks demand and wakes a parked encoder. */
+    private fun noteDemand() {
+        lastPullAt = SystemClock.uptimeMillis()
+        if (parked) {
+            parked = false
+            handler.post { scheduleEncode() }
+        }
+    }
+
     override fun latestFrame(): ByteArray? {
+        noteDemand()
         if (ended) return null
         val f = frame ?: return null
         return if (f.width == requestedWidth && f.height == requestedHeight) f.jpeg else null
     }
 
     override fun frameSequence(): Long {
+        noteDemand()
         val f = frame ?: return ScreenSource.UNKNOWN_SEQUENCE
         return if (f.width == requestedWidth && f.height == requestedHeight) f.seq else ScreenSource.UNKNOWN_SEQUENCE
     }
@@ -359,6 +420,7 @@ class MediaProjectionScreenSource(
         const val DEFAULT_HEIGHT = 240
         const val DEFAULT_QUALITY = 40
         const val MIN_ENCODE_INTERVAL_MS = 20L
+        const val DEMAND_WINDOW_MS = 1000L
         const val START_TIMEOUT_S = 5L
         const val TAG = "Pillion"
     }

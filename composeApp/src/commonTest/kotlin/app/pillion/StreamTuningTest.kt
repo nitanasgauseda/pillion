@@ -30,20 +30,32 @@ private class ChunkedChannel(private val data: ByteArray, private val chunk: Int
 class StreamTuningTest {
 
     @Test
-    fun adaptive_quality_steps_down_when_link_bound_and_never_below_floor() {
+    fun adaptive_quality_steps_down_while_it_helps_and_never_below_floor() {
         val q = AdaptiveQuality(ceiling = 40, targetIntervalMs = 66)
-        assertEquals(15, q.floor)
+        assertEquals(25, q.floor)
         assertEquals(35, q.onWindow(avgAckMs = 120, frames = 8))
-        assertEquals(30, q.onWindow(avgAckMs = 120, frames = 8))
-        repeat(10) { q.onWindow(avgAckMs = 200, frames = 5) }
-        assertEquals(15, q.current)
-        assertNull(q.onWindow(avgAckMs = 200, frames = 5), "already at floor")
+        assertEquals(30, q.onWindow(avgAckMs = 105, frames = 8)) // smaller frames were faster
+        assertEquals(25, q.onWindow(avgAckMs = 95, frames = 8))
+        assertNull(q.onWindow(avgAckMs = 85, frames = 8), "already at floor")
+        assertEquals(25, q.current)
+    }
+
+    @Test
+    fun adaptive_quality_holds_when_a_drop_did_not_reduce_ack_time() {
+        // A dash that is slow to render: ACK time doesn't depend on JPEG size.
+        val q = AdaptiveQuality(ceiling = 40, targetIntervalMs = 66)
+        assertEquals(35, q.onWindow(avgAckMs = 150, frames = 6))
+        repeat(10) { assertNull(q.onWindow(avgAckMs = 150, frames = 6)) }
+        assertEquals(35, q.current, "must not slide to the floor for no gain")
+        // Headroom re-arms the controller.
+        assertEquals(40, q.onWindow(avgAckMs = 30, frames = 15))
+        assertEquals(35, q.onWindow(avgAckMs = 150, frames = 6))
     }
 
     @Test
     fun adaptive_quality_recovers_to_but_not_above_ceiling() {
         val q = AdaptiveQuality(ceiling = 40, targetIntervalMs = 66)
-        q.onWindow(120, 8); q.onWindow(120, 8)
+        q.onWindow(120, 8); q.onWindow(100, 8)
         assertEquals(30, q.current)
         assertEquals(35, q.onWindow(avgAckMs = 30, frames = 15))
         assertEquals(40, q.onWindow(avgAckMs = 30, frames = 15))

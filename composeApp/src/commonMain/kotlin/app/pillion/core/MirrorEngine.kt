@@ -92,7 +92,11 @@ class MirrorEngine(
                             throw t // normal mirror: first failure remains fatal
                         }
                         consecutiveFailures++
-                        val retryDelayMs = ReconnectBackoff.delayMs(consecutiveFailures)
+                        // Back off only for a dash that was reachable and dropped. While waiting for
+                        // a bike to be switched on (VD mode), keep polling at the base rate so the
+                        // dash connects promptly after ignition.
+                        val retryDelayMs =
+                            if (connectedOnce) ReconnectBackoff.delayMs(consecutiveFailures) else ReconnectBackoff.BASE_MS
                         if (!connectedOnce) {
                             initialFailures++
                             // An unpowered bike is expected in VD mode. Log the transition once,
@@ -272,7 +276,7 @@ class MirrorEngine(
          * happy with no traffic, but a periodic frame keeps the link and the dash's image alive.
          */
         const val UNCHANGED_RESEND_MS = 500L
-        const val IDLE_POLL_MS = 10L
+        const val IDLE_POLL_MS = 30L
         const val HANDSHAKE_TIMEOUT_MS = 5000L
         const val ACK_TIMEOUT_MS = 2000L
     }

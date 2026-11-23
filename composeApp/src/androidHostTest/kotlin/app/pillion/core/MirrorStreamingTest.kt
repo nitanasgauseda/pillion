@@ -160,13 +160,14 @@ class MirrorStreamingTest {
     }
 
     @Test
-    fun adaptive_quality_steps_down_on_a_slow_link_and_stays_within_bounds() {
-        val dash = SimulatedDash(ackDelayMs = 150) // link can only do ~6 fps at this frame size
+    fun adaptive_quality_steps_down_on_a_slow_link_but_stops_when_it_does_not_help() {
+        // ACK time here is fixed (not size-dependent), like a dash that is slow to render.
+        val dash = SimulatedDash(ackDelayMs = 150)
         val screen = MovingScreen()
         run(dash, screen, maxFps = 15, adaptiveCeiling = 40)
-        assertTrue(waitFor(4000) { screen.qualities.size >= 2 }, "quality never adapted: ${screen.qualities}")
-        assertEquals(listOf(35, 30), screen.qualities.take(2))
-        assertTrue(screen.qualities.all { it in 15..40 })
+        assertTrue(waitFor(4000) { screen.qualities.isNotEmpty() }, "quality never adapted")
+        Thread.sleep(3000)
+        assertEquals(listOf(35), screen.qualities.toList(), "one probe step, then hold")
     }
 
     @Test

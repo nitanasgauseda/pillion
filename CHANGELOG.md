@@ -11,19 +11,23 @@ All notable changes to Pillion are documented here. The format follows
   *Fill dash*, which mirrors at the phone's aspect ratio and crops the centre so the dash has no black bars.
   Follows rotation.
 - **Adaptive image quality (Android mirroring).** The *Image quality* slider is now the maximum: quality
-  steps down (by 5, at most 25 below the slider, never under 15) while the Bluetooth link can't reach the
-  fps cap, and back up once it can.
+  steps down (by 5, at most 20 below the slider, never under 25) while the Bluetooth link can't reach the
+  fps cap, and back up once it can. It stops stepping down when a step didn't make ACKs faster (a dash
+  that is slow to render gains nothing from a blurrier picture).
 
 ### Changed
 - **Encoding no longer blocks sending.** Mirroring JPEGs are encoded on the capture thread as soon as the
   screen changes, so the Bluetooth loop sends a ready frame instead of compressing after every ACK.
+  Encoding pauses while nothing is being sent (connecting, handshake, reconnect backoff).
 - **Captured at the dash's own size.** The mirror virtual display is resized to the size the dash reports
   at handshake (e.g. 480x234 on XMAX), so frames are a 1:1 crop instead of being scaled every time.
+  Android 14+: the display is detached before resizing, and single-app capture uses the captured app's size.
 - **Unchanged screens aren't re-sent at full rate.** When the picture hasn't changed since the dash's last
   ACK, it is re-sent only every 500 ms (mirroring, and dash mode while the app is on the dash). Saves
   Bluetooth airtime and battery at a red light; the fps shown drops accordingly while the screen is static.
-- **Reconnect backoff.** Retries after a lost/unreachable dash wait 1.5 s, 3 s, then 5 s (reset after every
-  successful handshake) instead of a fixed 1.5 s.
+- **Reconnect backoff.** Retries after a dropped link wait 1.5 s, 3 s, then 5 s (reset after every
+  successful handshake) instead of a fixed 1.5 s. Waiting for a bike that isn't switched on yet (dash mode)
+  still retries every 1.5 s so it connects promptly after ignition.
 - Less garbage per frame: reused capture/encode bitmaps and JPEG buffers (app and dash helper), a frame
   reader that no longer copies its whole buffer on every read, and a CRC computed without copying the frame.
 
