@@ -43,6 +43,11 @@ android {
         }
     }
     buildTypes {
+        getByName("debug") {
+            // Installs next to the released Pillion (app.pillion) instead of replacing it; the
+            // src/debug overlay gives it its own name ("Pillion Perf") and a red launcher icon.
+            applicationIdSuffix = ".perf"
+        }
         getByName("release") {
             isMinifyEnabled = false
             if (keystorePropertiesFile.exists()) {

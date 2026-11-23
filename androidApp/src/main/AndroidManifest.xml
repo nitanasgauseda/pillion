@@ -84,7 +84,7 @@
         <!-- Shares the diagnostic log zip from Settings → "Share diagnostic logs". -->
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="app.pillion.diagfiles"
+            android:authorities="${applicationId}.diagfiles"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
