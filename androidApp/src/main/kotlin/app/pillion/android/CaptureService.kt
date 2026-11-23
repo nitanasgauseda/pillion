@@ -23,6 +23,7 @@ import app.pillion.core.MirrorEngine
 import app.pillion.core.ScreenSource
 import app.pillion.core.MirrorState
 import app.pillion.core.CastMode
+import app.pillion.core.MirrorFit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -76,11 +77,11 @@ class CaptureService : Service() {
         if (dashEnabled) startDashSession(quality, fps, dashResolutionFrom(intent), intent?.getStringExtra(EXTRA_DASH_COMPONENT), DashDpi.snap(intent?.getIntExtra(EXTRA_DASH_DPI, DashDpi.DEFAULT) ?: DashDpi.DEFAULT),
             DashMargins.clamped(intent?.getIntExtra(EXTRA_MARGIN_LEFT, 0) ?: 0, intent?.getIntExtra(EXTRA_MARGIN_BOTTOM, 0) ?: 0),
             DashMarginColor.fromName(intent?.getStringExtra(EXTRA_MARGIN_COLOR)))
-        else startMirrorSession(quality, fps)
+        else startMirrorSession(quality, fps, MirrorFit.fromName(intent?.getStringExtra(EXTRA_MIRROR_FIT)))
         return START_NOT_STICKY
     }
 
-    private fun startMirrorSession(quality: Int, fps: Int) {
+    private fun startMirrorSession(quality: Int, fps: Int, fit: MirrorFit) {
         val data = resultData
         if (resultCode == 0 || data == null) {
             fail("Screen capture not granted — tap Start again")
@@ -106,7 +107,7 @@ class CaptureService : Service() {
             fail("Screen capture denied")
             return
         }
-        runEngine(MediaProjectionScreenSource(this, projection, quality) {
+        runEngine(MediaProjectionScreenSource(this, projection, quality, fps, fit) {
             // The capture token is single-use: a system revocation must end the
             // mirror session, not leave RFCOMM connected awaiting frames forever.
             if (!stopping && _mode.value == CastMode.MIRROR) {
@@ -116,7 +117,7 @@ class CaptureService : Service() {
                 engine?.stop()
                 stopSelf()
             }
-        }, fps)
+        }, fps, adaptiveQualityCeiling = quality)
     }
 
     private fun startDashSession(quality: Int, fps: Int, resolution: DashResolution, component: String?, dpi: Int, margins: DashMargins, marginColor: DashMarginColor) {
@@ -252,8 +253,13 @@ class CaptureService : Service() {
         screen: ScreenSource,
         maxFps: Int,
         retryInitialConnection: Boolean = false,
+        adaptiveQualityCeiling: Int? = null,
     ) {
-        val mirror = MirrorEngine(RfcommByteChannel(), screen, maxFps, retryInitialConnection = retryInitialConnection)
+        val mirror = MirrorEngine(
+            RfcommByteChannel(), screen, maxFps,
+            retryInitialConnection = retryInitialConnection,
+            adaptiveQualityCeiling = adaptiveQualityCeiling,
+        )
         engine = mirror
         scope.launch {
             mirror.state.collect { state ->
@@ -390,6 +396,8 @@ class CaptureService : Service() {
         const val ACTION_STOP = "app.pillion.action.STOP"
         const val EXTRA_QUALITY = "quality"
         const val EXTRA_MAX_FPS = "maxFps"
+        /** [MirrorFit] name for phone mirroring: letterbox (FIT, default) or centre-crop (FILL). */
+        const val EXTRA_MIRROR_FIT = "mirrorFit"
         /** When true, the session switches to the dedicated dash display whenever the phone is locked. */
         const val EXTRA_DASH_ENABLED = "dashEnabled"
         const val EXTRA_DASH_COMPONENT = "dashComponent"

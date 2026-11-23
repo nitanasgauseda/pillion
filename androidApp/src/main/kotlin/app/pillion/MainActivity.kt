@@ -60,6 +60,7 @@ class MainActivity : ComponentActivity() {
                 val intent = Intent(this, CaptureService::class.java)
                     .putExtra(CaptureService.EXTRA_QUALITY, pendingSettings.quality)
                     .putExtra(CaptureService.EXTRA_MAX_FPS, pendingSettings.maxFps)
+                    .putExtra(CaptureService.EXTRA_MIRROR_FIT, pendingSettings.mirrorFit.name)
                     .putExtra(CaptureService.EXTRA_DASH_ENABLED, false)
                     .putExtra(CaptureService.EXTRA_DASH_WIDTH, pendingSettings.dashResolution.width)
                     .putExtra(CaptureService.EXTRA_DASH_HEIGHT, pendingSettings.dashResolution.height)

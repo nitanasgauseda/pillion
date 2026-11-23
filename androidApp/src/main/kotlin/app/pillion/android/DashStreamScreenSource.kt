@@ -152,6 +152,9 @@ class DashStreamScreenSource(
     /** Incremented only after a size-validated helper JPEG is received. */
     fun receivedFrameSequence(): Long = receiveSeq
 
+    /** Whether [latestFrame] would currently return a helper JPEG. */
+    fun hasFrame(): Boolean = synchronized(stateLock) { socket != null && gate.isReady() && latest != null }
+
     /** Tell the helper to move the foreground app onto the dash display and start encoding. */
     fun promote(component: String) {
         synchronized(stateLock) { latest = null }

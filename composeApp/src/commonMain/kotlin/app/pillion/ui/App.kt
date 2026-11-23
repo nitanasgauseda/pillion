@@ -21,6 +21,7 @@ import app.pillion.core.CastMode
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import app.pillion.core.MirrorSettings
+import app.pillion.core.MirrorFit
 import app.pillion.core.SettingsStore
 import app.pillion.core.ThemeMode
 import app.pillion.core.UpdateChecker
@@ -78,6 +79,7 @@ fun App(
         var dashDpi by remember { mutableStateOf(settingsStore?.dashDpi() ?: DashDpi.DEFAULT) }
         var dashMargins by remember { mutableStateOf(settingsStore?.dashMargins() ?: DashMargins()) }
         var dashMarginColor by remember { mutableStateOf(settingsStore?.dashMarginColor() ?: DashMarginColor.Black) }
+        var mirrorFit by remember { mutableStateOf(settingsStore?.mirrorFit() ?: MirrorFit.FIT) }
         var dashAppPackage by remember { mutableStateOf(settingsStore?.dashAppPackage()) }
         val dashApps = remember(dashAppCatalog) { dashAppCatalog?.availableApps().orEmpty() }
         var dashStartError by remember { mutableStateOf<String?>(null) }
@@ -111,6 +113,8 @@ fun App(
                 onQuality = { quality = it },
                 maxFps = maxFps,
                 onMaxFps = { maxFps = it },
+                mirrorFit = mirrorFit,
+                onMirrorFit = { mirrorFit = it; settingsStore?.setMirrorFit(it) },
                 themeMode = themeMode,
                 onThemeMode = { themeMode = it; settingsStore?.setThemeMode(it) },
                 dashSupported = dashSetup != null,
@@ -153,7 +157,7 @@ fun App(
                 update = update,
                 onOpenSettings = { showSettings = true },
                 onStart = {
-                    if (acknowledged) controller.start(MirrorSettings(quality, maxFps, dashResolution))
+                    if (acknowledged) controller.start(MirrorSettings(quality, maxFps, dashResolution, mirrorFit = mirrorFit))
                     else showDisclaimer = true
                 },
                 onStop = controller::stop,
@@ -178,7 +182,7 @@ fun App(
             ExperimentalDialog(onDismiss = {
                 showDisclaimer = false
                 acknowledged = true
-                controller.start(MirrorSettings(quality, maxFps, dashResolution))
+                controller.start(MirrorSettings(quality, maxFps, dashResolution, mirrorFit = mirrorFit))
             })
         } else if (update != null && !updateDismissed) {
             UpdateDialog(

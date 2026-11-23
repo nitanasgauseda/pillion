@@ -6,6 +6,32 @@ All notable changes to Pillion are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Screen fit (Android mirroring).** Settings -> *Screen fit*: *Whole screen* (letterbox, as before) or
+  *Fill dash*, which mirrors at the phone's aspect ratio and crops the centre so the dash has no black bars.
+  Follows rotation.
+- **Adaptive image quality (Android mirroring).** The *Image quality* slider is now the maximum: quality
+  steps down (by 5, at most 25 below the slider, never under 15) while the Bluetooth link can't reach the
+  fps cap, and back up once it can.
+
+### Changed
+- **Encoding no longer blocks sending.** Mirroring JPEGs are encoded on the capture thread as soon as the
+  screen changes, so the Bluetooth loop sends a ready frame instead of compressing after every ACK.
+- **Captured at the dash's own size.** The mirror virtual display is resized to the size the dash reports
+  at handshake (e.g. 480x234 on XMAX), so frames are a 1:1 crop instead of being scaled every time.
+- **Unchanged screens aren't re-sent at full rate.** When the picture hasn't changed since the dash's last
+  ACK, it is re-sent only every 500 ms (mirroring, and dash mode while the app is on the dash). Saves
+  Bluetooth airtime and battery at a red light; the fps shown drops accordingly while the screen is static.
+- **Reconnect backoff.** Retries after a lost/unreachable dash wait 1.5 s, 3 s, then 5 s (reset after every
+  successful handshake) instead of a fixed 1.5 s.
+- Less garbage per frame: reused capture/encode bitmaps and JPEG buffers (app and dash helper), a frame
+  reader that no longer copies its whole buffer on every read, and a CRC computed without copying the frame.
+
+### CI
+- New non-gating `lint` job publishes the Android lint report on every push/PR (#23).
+- Streaming tests against a simulated CCU: fps cap, unchanged-frame refresh, resend after reconnect,
+  adaptive quality.
+
 ## [0.3.0-alpha] - 2026-11-08
 
 Third alpha. Scooter dashes (XMAX/NMAX) connect, Android reconnects on its own, iOS copes with a bike that

@@ -13,11 +13,16 @@ internal object Crc32Mpeg2 {
         }
     }
 
-    fun compute(data: ByteArray): Int {
-        var c = -1 // 0xFFFFFFFF
-        for (b in data) {
-            c = (c shl 8) xor table[((c ushr 24) xor (b.toInt() and 0xff)) and 0xff]
+    fun compute(data: ByteArray): Int = update(INIT, data, 0, data.size)
+
+    /** Continue a CRC over data[offset, offset+length) — lets a frame be checksummed in parts without concatenating. */
+    fun update(crc: Int, data: ByteArray, offset: Int, length: Int): Int {
+        var c = crc
+        for (i in offset until offset + length) {
+            c = (c shl 8) xor table[((c ushr 24) xor (data[i].toInt() and 0xff)) and 0xff]
         }
         return c
     }
+
+    const val INIT: Int = -1 // 0xFFFFFFFF
 }

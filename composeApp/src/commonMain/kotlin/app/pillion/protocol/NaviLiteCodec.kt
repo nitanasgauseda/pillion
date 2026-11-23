@@ -25,7 +25,8 @@ object NaviLiteCodec {
             ((size ushr 24) and 0xff).toByte(),
             payloadDataType.toByte()
         )
-        val crc = Crc32Mpeg2.compute(header + payload)
+        // Checksum header then payload in place: no header+payload temp copy per (JPEG-sized) frame.
+        val crc = Crc32Mpeg2.update(Crc32Mpeg2.update(Crc32Mpeg2.INIT, header, 0, header.size), payload, 0, size)
         val out = ByteArray(HEADER_SIZE + CRC_SIZE + size)
         header.copyInto(out, 0)
         out[12] = (crc and 0xff).toByte()

@@ -25,6 +25,12 @@ class SwitchableScreenSource(
     override fun latestFrame(): ByteArray? =
         if (useDash) dash.latestFrame() else mirror.latestFrame()
 
+    // The dash side is always re-sent; the mirror side reports its own change counter.
+    override fun frameSequence(): Long =
+        if (useDash) ScreenSource.UNKNOWN_SEQUENCE else mirror.frameSequence()
+
+    override fun setQuality(quality: Int) = mirror.setQuality(quality)
+
     override fun stop() {
         runCatching { mirror.stop() }
         runCatching { dash.stop() }

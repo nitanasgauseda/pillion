@@ -31,11 +31,16 @@ class MirrorEngine(
     private val imageType: Int = 3, // NAVIGATION_EXPANDED
     // VD can start before the bike is powered on; MediaProjection keeps fail-fast semantics.
     private val retryInitialConnection: Boolean = false,
+    // The user's JPEG quality, used as the ceiling for adaptive quality; null disables it (e.g. the
+    // dash helper encodes out-of-process and has its own fixed quality).
+    adaptiveQualityCeiling: Int? = null,
 ) {
     private val _state = MutableStateFlow<MirrorState>(MirrorState.Idle)
     val state: StateFlow<MirrorState> = _state.asStateFlow()
 
     private val minIntervalMs: Long = if (maxFps in 1..59) 1000L / maxFps else 0L
+    private val adaptive: AdaptiveQuality? =
+        adaptiveQualityCeiling?.takeIf { minIntervalMs > 0L }?.let { AdaptiveQuality(it, minIntervalMs) }
     private var job: Job? = null
     @Volatile private var running = false
     @Volatile private var lastFrameKb = 0
@@ -57,6 +62,7 @@ class MirrorEngine(
                 // resume, so a drop is a brief reconnect instead of a dead session. Only stop() ends it.
                 var connectedOnce = false
                 var initialFailures = 0
+                var consecutiveFailures = 0 // since the last successful handshake; drives backoff
                 while (running) {
                     try {
                         _state.value = MirrorState.Connecting
@@ -76,6 +82,7 @@ class MirrorEngine(
                             Logger.d("session: CCU connected after $initialFailures initial failure(s)")
                         }
                         connectedOnce = true
+                        consecutiveFailures = 0
                         seq = 1 // fresh sequence per (re)connect, matching a new session
                         Logger.d("session: streaming")
                         streamLoop(reader)
@@ -84,6 +91,8 @@ class MirrorEngine(
                         if (!connectedOnce && !retryInitialConnection) {
                             throw t // normal mirror: first failure remains fatal
                         }
+                        consecutiveFailures++
+                        val retryDelayMs = ReconnectBackoff.delayMs(consecutiveFailures)
                         if (!connectedOnce) {
                             initialFailures++
                             // An unpowered bike is expected in VD mode. Log the transition once,
@@ -92,11 +101,11 @@ class MirrorEngine(
                                 Logger.d("session: waiting for CCU (initial attempt $initialFailures failed: ${t::class.simpleName})")
                             }
                         } else {
-                            Logger.e("session dropped; reconnecting in ${RECONNECT_DELAY_MS}ms", t)
+                            Logger.e("session dropped; reconnecting in ${retryDelayMs}ms", t)
                         }
                         runCatching { channel.close() }
                         // Stop must end a pending initial-connect wait without a long join.
-                        var remaining = RECONNECT_DELAY_MS
+                        var remaining = retryDelayMs
                         while (running && remaining > 0) {
                             val step = minOf(100L, remaining)
                             sleepMs(step)
@@ -167,7 +176,21 @@ class MirrorEngine(
         var ackMsTotal = 0L
         var ackMsMax = 0L
         var consecutiveTimeouts = 0
+        // Sequence of the last frame the dash ACKed on this connection. Starts unset, so the first
+        // frame after every (re)connect is always sent.
+        var lastAckedFrameSeq: Long? = null
         while (running) {
+            // Read the sequence BEFORE the frame: the source publishes a frame no later than its
+            // sequence, so the JPEG we send is at least as new as the sequence we record for it.
+            val frameSeq = screen.frameSequence()
+            if (frameSeq != ScreenSource.UNKNOWN_SEQUENCE && frameSeq == lastAckedFrameSeq &&
+                nowMs() - lastSend < UNCHANGED_RESEND_MS
+            ) {
+                // Screen unchanged since the dash's last ACK: don't spend Bluetooth airtime and
+                // battery re-sending the same picture at full rate.
+                sleepMs(IDLE_POLL_MS)
+                continue
+            }
             val jpeg = screen.latestFrame()
             if (jpeg == null) {
                 if (!waitedForFrame) {
@@ -204,6 +227,7 @@ class MirrorEngine(
                 Logger.d("session: IMAGE_ACK recovered seq=$sentSeq after $consecutiveTimeouts timeout(s)")
                 consecutiveTimeouts = 0
             }
+            lastAckedFrameSeq = frameSeq
             val ackMs = nowMs() - sentAt
             ackMsTotal += ackMs
             if (ackMs > ackMsMax) ackMsMax = ackMs
@@ -212,6 +236,10 @@ class MirrorEngine(
             if (elapsed >= 1000) {
                 val avgAckMs = if (acks > 0) ackMsTotal / acks else 0L
                 Logger.d("session: $acks fps, $lastFrameKb KB/frame, ack ${avgAckMs}ms avg/${ackMsMax}ms max")
+                adaptive?.onWindow(avgAckMs, acks)?.let { q ->
+                    Logger.d("session: adaptive JPEG quality -> $q (ceiling ${adaptive.ceiling})")
+                    screen.setQuality(q)
+                }
                 _state.value = MirrorState.Streaming(acks * 1000.0 / elapsed, lastFrameKb)
                 acks = 0
                 ackMsTotal = 0L
@@ -239,8 +267,12 @@ class MirrorEngine(
     }
 
     private companion object {
-        /** Wait between a dropped link and a reconnect attempt (the dash needs a moment to settle). */
-        const val RECONNECT_DELAY_MS = 1500L
+        /**
+         * When the screen hasn't changed, re-send the last frame at most this often. Most CCUs are
+         * happy with no traffic, but a periodic frame keeps the link and the dash's image alive.
+         */
+        const val UNCHANGED_RESEND_MS = 500L
+        const val IDLE_POLL_MS = 10L
         const val HANDSHAKE_TIMEOUT_MS = 5000L
         const val ACK_TIMEOUT_MS = 2000L
     }

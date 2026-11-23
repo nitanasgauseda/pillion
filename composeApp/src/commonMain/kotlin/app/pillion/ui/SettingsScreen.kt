@@ -58,6 +58,7 @@ import app.pillion.core.AppInfo
 import app.pillion.core.DashDpi
 import app.pillion.core.DashMargins
 import app.pillion.core.DashMarginColor
+import app.pillion.core.MirrorFit
 import app.pillion.core.DashApp
 import app.pillion.core.DashResolution
 import app.pillion.core.ThemeMode
@@ -74,6 +75,8 @@ internal fun SettingsScreen(
     onQuality: (Int) -> Unit,
     maxFps: Int,
     onMaxFps: (Int) -> Unit,
+    mirrorFit: MirrorFit = MirrorFit.FIT,
+    onMirrorFit: (MirrorFit) -> Unit = {},
     themeMode: ThemeMode,
     onThemeMode: (ThemeMode) -> Unit,
     dashSupported: Boolean = false,
@@ -259,10 +262,30 @@ internal fun SettingsScreen(
             SettingSlider("Image quality", "$quality", quality.toFloat(), 10f, 80f) { onQuality(it.roundToInt()) }
             GroupDivider()
             SettingSlider("Max frame rate", "$maxFps fps", maxFps.toFloat(), 1f, 15f, steps = 13) { onMaxFps(it.roundToInt()) }
+            GroupDivider()
+            Column(Modifier.padding(vertical = 8.dp)) {
+                Text("Screen fit", style = MaterialTheme.typography.bodyMedium)
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(top = 6.dp)) {
+                    val fitOptions = listOf(
+                        MirrorFit.FIT to "Whole screen",
+                        MirrorFit.FILL to "Fill dash",
+                    )
+                    fitOptions.forEachIndexed { index, (fit, label) ->
+                        SegmentedButton(
+                            selected = mirrorFit == fit,
+                            onClick = { onMirrorFit(fit) },
+                            shape = SegmentedButtonDefaults.itemShape(index, fitOptions.size),
+                        ) {
+                            Text(label)
+                        }
+                    }
+                }
+            }
         }
         Text(
-            "Higher quality looks sharper but makes the picture less smooth. The FPS cap " +
-                "saves battery and reduces heat.",
+            "Image quality is the maximum: it is lowered automatically while the Bluetooth link can't " +
+                "keep up, then restored. The FPS cap saves battery and reduces heat. \"Fill dash\" crops " +
+                "the middle of the screen instead of showing black bars.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 6.dp, top = 8.dp, end = 6.dp),

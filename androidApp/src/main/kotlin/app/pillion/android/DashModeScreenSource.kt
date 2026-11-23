@@ -14,6 +14,8 @@ class DashModeScreenSource(
     private val status = StatusScreenSource()
     @Volatile private var mode = Mode.STATUS
     @Volatile private var promoteStartFrameSeq = 0L
+    // Bumped on every promote/demote so a sequence from one DASH period never matches another.
+    @Volatile private var epoch = 0L
 
     override fun start() {
         status.start()
@@ -40,10 +42,19 @@ class DashModeScreenSource(
         Mode.DASH -> dash.latestFrame() ?: status.latestFrame()
     }
 
+    /**
+     * Only a settled DASH stream has a meaningful change counter (the helper encodes only when the
+     * VD redraws). STATUS/PROMOTING frames, or DASH falling back to STATUS, are always re-sent.
+     */
+    override fun frameSequence(): Long =
+        if (mode == Mode.DASH && dash.hasFrame()) (epoch shl 40) or (dash.receivedFrameSequence() and SEQ_MASK)
+        else ScreenSource.UNKNOWN_SEQUENCE
+
     fun promote(component: String) {
         // Arm the cover *before* sending PROMOTE. Do not reveal the old task's
         // JPEG during relocation or a delayed VD restart.
         promoteStartFrameSeq = dash.receivedFrameSequence()
+        epoch++
         status.reset()
         mode = Mode.PROMOTING
         dash.promote(component)
@@ -52,6 +63,7 @@ class DashModeScreenSource(
 
     fun demote() {
         mode = Mode.STATUS
+        epoch++
         status.reset()
         dash.demote()
         Log.i(TAG, "DASH -> STATUS")
@@ -64,5 +76,8 @@ class DashModeScreenSource(
         status.stop()
     }
 
-    private companion object { const val TAG = "Pillion" }
+    private companion object {
+        const val TAG = "Pillion"
+        const val SEQ_MASK = (1L shl 40) - 1
+    }
 }

@@ -23,6 +23,10 @@ interface SettingsStore {
     fun dashMarginColor(): DashMarginColor = DashMarginColor.Black
     fun setDashMarginColor(color: DashMarginColor) {}
 
+    /** How phone mirroring places the screen on the dash (letterbox or centre-crop). */
+    fun mirrorFit(): MirrorFit = MirrorFit.FIT
+    fun setMirrorFit(fit: MirrorFit) {}
+
     /** Package selected for dedicated VD. Null means no choice yet. */
     fun dashAppPackage(): String? = null
     fun setDashAppPackage(packageName: String?) {}

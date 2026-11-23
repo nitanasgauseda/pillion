@@ -775,44 +775,65 @@ object DashServer {
         }
     }
 
+    // Encode buffers, reused across frames (capture thread only): reallocated only when a size changes.
+    private var padBitmap: Bitmap? = null
+    private var scaledBitmap: Bitmap? = null
+    private var scaledCanvas: Canvas? = null
+    private var outBitmap: Bitmap? = null
+    private var outCanvas: Canvas? = null
+    private val jpegOut = ByteArrayOutputStream(64 * 1024)
+    private val cropSrc = android.graphics.Rect()
+    private val cropDst = android.graphics.Rect()
+    private val scalePaint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG).apply {
+        xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC)
+    }
+
+    private fun bitmapOf(current: Bitmap?, width: Int, height: Int): Bitmap =
+        if (current != null && current.width == width && current.height == height) current
+        else Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+
     private fun toJpeg(image: Image): ByteArray {
         val plane = image.planes[0]
         val pixelStride = plane.pixelStride
         val rowPadding = plane.rowStride - pixelStride * virtualWidth
-        val padded = Bitmap.createBitmap(
+        val padded = bitmapOf(
+            padBitmap,
             virtualWidth + if (pixelStride > 0) rowPadding / pixelStride else 0,
             virtualHeight,
-            Bitmap.Config.ARGB_8888,
-        )
+        ).also { padBitmap = it }
         padded.copyPixelsFromBuffer(plane.buffer)
-        val bitmap = if (rowPadding == 0) {
-            padded
-        } else {
-            Bitmap.createBitmap(padded, 0, 0, virtualWidth, virtualHeight)
-        }
         val usableWidth = outputWidth - margins.left
         val usableHeight = outputHeight - margins.bottom
-        val scaled = if (bitmap.width == usableWidth && bitmap.height == usableHeight) {
-            bitmap
+        // Crop the row padding and scale to the usable area in one draw (no intermediate bitmaps).
+        val scaled = if (rowPadding == 0 && padded.width == usableWidth && padded.height == usableHeight) {
+            padded
         } else {
-            Bitmap.createScaledBitmap(bitmap, usableWidth, usableHeight, true)
+            val target = bitmapOf(scaledBitmap, usableWidth, usableHeight)
+            if (target !== scaledBitmap) {
+                scaledBitmap = target
+                scaledCanvas = Canvas(target)
+            }
+            cropSrc.set(0, 0, virtualWidth, virtualHeight)
+            cropDst.set(0, 0, usableWidth, usableHeight)
+            scaledCanvas!!.drawBitmap(padded, cropSrc, cropDst, scalePaint)
+            target
         }
         val output = if (margins.left == 0 && margins.bottom == 0) {
             scaled
         } else {
-            Bitmap.createBitmap(outputWidth, outputHeight, Bitmap.Config.ARGB_8888).also { target ->
-                val canvas = Canvas(target)
-                canvas.drawColor(marginColor.argb)
-                canvas.drawBitmap(scaled, margins.left.toFloat(), 0f, null)
+            val target = bitmapOf(outBitmap, outputWidth, outputHeight)
+            if (target !== outBitmap) {
+                outBitmap = target
+                outCanvas = Canvas(target)
             }
+            val canvas = outCanvas!!
+            canvas.drawColor(marginColor.argb)
+            canvas.drawBitmap(scaled, margins.left.toFloat(), 0f, null)
+            target
         }
-        val out = ByteArrayOutputStream()
-        output.compress(Bitmap.CompressFormat.JPEG, quality, out)
-        if (output !== scaled) output.recycle()
-        if (scaled !== bitmap) scaled.recycle()
-        if (bitmap !== padded) bitmap.recycle()
-        padded.recycle()
-        return out.toByteArray()
+        jpegOut.reset()
+        output.compress(Bitmap.CompressFormat.JPEG, quality, jpegOut)
+        return jpegOut.toByteArray()
     }
 
     private fun logEncodeStats(bytes: Int, encodeMs: Long) {
